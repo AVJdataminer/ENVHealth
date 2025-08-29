@@ -1,0 +1,15 @@
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+.build/
+Packages/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# App specific
+icon design*.png
+.history/
