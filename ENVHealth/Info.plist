@@ -20,6 +20,19 @@
     <string>1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>CFBundleDisplayName</key>
+    <string>ENVHealth</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>bornwild.ENVHealth</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>envhealth</string>
+            </array>
+        </dict>
+    </array>
     <key>LSRequiresIPhoneOS</key>
     <true/>
 
@@ -75,10 +88,22 @@
 
     <!-- Privacy keys -->
     <key>NSHealthShareUsageDescription</key>
-    <string>ENVHealth reads your blood pressure and heart rate to log entries with notes.</string>
+    <string>ENVHealth reads your blood pressure, heart rate, SpO2, body temperature, and other health metrics to create comprehensive health entries with environmental correlation data.</string>
+
+    <key>NSHealthUpdateUsageDescription</key>
+    <string>ENVHealth writes your logged health entries back to Apple Health for comprehensive health tracking.</string>
 
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>ENVHealth uses your location to fetch local weather and air quality data.</string>
+    <string>ENVHealth uses your location to fetch local weather conditions and air quality data from nearby PurpleAir sensors for accurate environmental health correlation.</string>
+
+    <!-- App Store requirements -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+    
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+        <string>https</string>
+    </array>
 
     <!-- Optional if you ever add notifications -->
     <!--
