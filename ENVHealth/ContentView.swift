@@ -1978,6 +1978,32 @@ struct EntryRowView: View {
                 }
             }
             
+            // Display symptoms if any
+            if !entry.symptoms.isEmpty {
+                HStack {
+                    Text("Symptoms:")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 4) {
+                    ForEach(entry.symptoms, id: \.self) { symptom in
+                        HStack(spacing: 4) {
+                            Text(symptom.emoji)
+                                .font(.caption2)
+                            Text(symptom.rawValue)
+                                .font(.caption2)
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(8)
+                    }
+                }
+            }
+            
             if !entry.note.isEmpty {
                 Text(entry.note)
                     .font(.caption)
@@ -1987,6 +2013,15 @@ struct EntryRowView: View {
             }
         }
         .padding(.vertical, 4)
+        .overlay(
+            HStack {
+                Spacer()
+                Image(systemName: "pencil.circle")
+                    .foregroundColor(.blue)
+                    .font(.caption)
+            }
+            .padding(.trailing, 8)
+        )
         .onTapGesture {
             showingEditSheet = true
         }
@@ -2020,6 +2055,9 @@ struct EditEntryView: View {
     @State private var bodyTemperature: String
     @State private var respiratoryRate: String
     @State private var note: String
+    @State private var selectedSymptoms: Set<Symptom>
+    @State private var otherSymptomText: String
+    @State private var showingDeleteAlert = false
     
     init(entry: BPEntry, viewModel: BPLoggerViewModel) {
         self.entry = entry
@@ -2032,6 +2070,8 @@ struct EditEntryView: View {
         _bodyTemperature = State(initialValue: entry.bodyTemperature?.description ?? "")
         _respiratoryRate = State(initialValue: entry.respiratoryRate?.description ?? "")
         _note = State(initialValue: entry.note)
+        _selectedSymptoms = State(initialValue: Set(entry.symptoms))
+        _otherSymptomText = State(initialValue: "")
     }
     
     var body: some View {
@@ -2083,9 +2123,102 @@ struct EditEntryView: View {
                     }
                 }
                 
+                Section("Symptoms") {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
+                        ForEach(Symptom.allCases, id: \.self) { symptom in
+                            SymptomToggleView(
+                                symptom: symptom,
+                                isSelected: selectedSymptoms.contains(symptom),
+                                onToggle: { isSelected in
+                                    if isSelected {
+                                        selectedSymptoms.insert(symptom)
+                                    } else {
+                                        selectedSymptoms.remove(symptom)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                    
+                    // Other symptom text field (only show if "Other" is selected)
+                    if selectedSymptoms.contains(.other) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Specify other symptom:")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            TextField("Describe other symptom", text: $otherSymptomText)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                        }
+                    }
+                }
+                
                 Section("Notes") {
                     TextEditor(text: $note)
                         .frame(minHeight: 100)
+                }
+                
+                Section("Environmental Data") {
+                    HStack {
+                        Text("Weather Temperature")
+                        Spacer()
+                        if let temp = entry.temperatureC {
+                            Text(viewModel.useFahrenheit ? 
+                                String(format: "%.1f°F", viewModel.celsiusToFahrenheit(temp)) :
+                                String(format: "%.1f°C", temp))
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("—")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    HStack {
+                        Text("Air Quality Index")
+                        Spacer()
+                        if let aqi = entry.aqi {
+                            Text("\(Int(aqi))")
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("—")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    HStack {
+                        Text("PM2.5")
+                        Spacer()
+                        if let pm25 = entry.pm25 {
+                            Text(String(format: "%.1f µg/m³", pm25))
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("—")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    HStack {
+                        Text("PM10")
+                        Spacer()
+                        if let pm10 = entry.pm10 {
+                            Text(String(format: "%.1f µg/m³", pm10))
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("—")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    HStack {
+                        Text("Weather Conditions")
+                        Spacer()
+                        if let conditions = entry.conditions {
+                            Text(conditions)
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("—")
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 }
                 
                 Section("Entry Info") {
@@ -2105,6 +2238,14 @@ struct EditEntryView: View {
             }
             .navigationTitle("Edit Entry")
             .navigationBarTitleDisplayMode(.inline)
+            .alert("Delete Entry", isPresented: $showingDeleteAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    deleteEntry()
+                }
+            } message: {
+                Text("Are you sure you want to delete this entry? This action cannot be undone.")
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
@@ -2120,7 +2261,7 @@ struct EditEntryView: View {
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Delete", role: .destructive) {
-                        deleteEntry()
+                        showingDeleteAlert = true
                     }
                 }
             }
@@ -2149,7 +2290,7 @@ struct EditEntryView: View {
             note: note.trimmingCharacters(in: .whitespacesAndNewlines),
             latitude: entry.latitude,
             longitude: entry.longitude,
-            symptoms: entry.symptoms
+            symptoms: Array(selectedSymptoms)
         )
         
         // Find and replace the entry
