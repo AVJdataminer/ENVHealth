@@ -201,6 +201,16 @@ final class BPLoggerViewModel: NSObject, ObservableObject {
         print("Refreshing all health data, weather, and air quality...")
     }
     
+    func refreshAllDataAsync() async {
+        // Refresh health metrics from Apple Health
+        await fetchLatestHealthMetrics()
+        
+        // Refresh weather and air quality
+        await fetchWeatherAndAQI()
+        
+        print("Refreshing all health data, weather, and air quality...")
+    }
+    
     func refreshWeatherAndAQI() {
         self.errorMessage = "🔄 Starting refresh..."
         
@@ -1522,6 +1532,9 @@ struct ContentView: View {
                 .padding(.horizontal)
                 .padding(.top, 8)
             }
+            .refreshable {
+                await vm.refreshAllDataAsync()
+            }
             .navigationTitle("ENVHealth")
             .navigationBarTitleDisplayMode(.large)
             .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -2494,6 +2507,8 @@ struct ExportView: View {
     @State private var showingShareSheet = false
     @State private var csvURL: URL?
     @State private var exportAllHealthData = false
+    @State private var isExporting = false
+    @State private var exportError: String?
     
     // Export preferences
     @State private var selectedDays = 30
@@ -2726,22 +2741,38 @@ struct ExportView: View {
                         exportCustomCSV()
                     } label: {
                         HStack {
-                            Image(systemName: "square.and.arrow.up")
+                            if isExporting {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "square.and.arrow.up")
+                            }
                             if exportAllHealthData {
-                                Text("Export All Health Data (Last \(selectedDays) days)")
+                                Text(isExporting ? "Exporting..." : "Export All Health Data (Last \(selectedDays) days)")
                                     .fontWeight(.semibold)
                             } else {
-                                Text("Export CSV (\(filteredEntries.count) entries)")
+                                Text(isExporting ? "Exporting..." : "Export CSV (\(filteredEntries.count) entries)")
                                     .fontWeight(.semibold)
                             }
                         }
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(exportAllHealthData || !filteredEntries.isEmpty ? Color.blue : Color.gray)
+                        .background((exportAllHealthData || !filteredEntries.isEmpty) && !isExporting ? Color.blue : Color.gray)
                         .foregroundColor(.white)
                         .cornerRadius(12)
                     }
-                    .disabled(!exportAllHealthData && filteredEntries.isEmpty)
+                    .disabled((!exportAllHealthData && filteredEntries.isEmpty) || isExporting)
+                    
+                    // Error message display
+                    if let error = exportError {
+                        Text(error)
+                            .foregroundColor(.red)
+                            .font(.caption)
+                            .padding()
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(8)
+                    }
                 }
                 .padding()
             }
@@ -2763,13 +2794,24 @@ struct ExportView: View {
     }
     
     private func exportCustomCSV() {
+        isExporting = true
+        exportError = nil
+        
         if exportAllHealthData {
             // Export all health data from HealthKit
             Task {
-                if let url = await generateHistoricalHealthCSV() {
-                    await MainActor.run {
-                        csvURL = url
-                        showingShareSheet = true
+                do {
+                    if let url = await generateHistoricalHealthCSV() {
+                        await MainActor.run {
+                            csvURL = url
+                            showingShareSheet = true
+                            isExporting = false
+                        }
+                    } else {
+                        await MainActor.run {
+                            exportError = "Failed to generate CSV file. Please try again."
+                            isExporting = false
+                        }
                     }
                 }
             }
@@ -2778,6 +2820,10 @@ struct ExportView: View {
             if let url = generateCustomCSV() {
                 csvURL = url
                 showingShareSheet = true
+                isExporting = false
+            } else {
+                exportError = "Failed to generate CSV file. Please try again."
+                isExporting = false
             }
         }
     }
@@ -3021,25 +3067,32 @@ struct ExportView: View {
             (HKQuantityType.quantityType(forIdentifier: .walkingHeartRateAverage)!, "walkingHeartRate")
         ]
         
-        // Fetch data for each type
+        // Fetch data for each type with timeout
         for (quantityType, identifier) in types {
-            let samples = await fetchHealthSamples(for: quantityType, startDate: startDate, endDate: endDate)
-            
-            for sample in samples {
-                let value = getValueForHealthType(sample: sample, identifier: identifier)
-                
-                // Find existing data point for this date or create new one
-                if let existingIndex = healthDataPoints.firstIndex(where: { 
-                    Calendar.current.isDate($0.date, equalTo: sample.endDate, toGranularity: .minute) 
-                }) {
-                    // Update existing data point
-                    updateHealthDataPoint(&healthDataPoints[existingIndex], identifier: identifier, value: value)
-                } else {
-                    // Create new data point
-                    var newDataPoint = HealthDataPoint(date: sample.endDate)
-                    updateHealthDataPoint(&newDataPoint, identifier: identifier, value: value)
-                    healthDataPoints.append(newDataPoint)
+            do {
+                let samples = try await withTimeout(seconds: 30) {
+                    await fetchHealthSamples(for: quantityType, startDate: startDate, endDate: endDate)
                 }
+                
+                for sample in samples {
+                    let value = getValueForHealthType(sample: sample, identifier: identifier)
+                    
+                    // Find existing data point for this date or create new one
+                    if let existingIndex = healthDataPoints.firstIndex(where: { 
+                        Calendar.current.isDate($0.date, equalTo: sample.endDate, toGranularity: .minute) 
+                    }) {
+                        // Update existing data point
+                        updateHealthDataPoint(&healthDataPoints[existingIndex], identifier: identifier, value: value)
+                    } else {
+                        // Create new data point
+                        var newDataPoint = HealthDataPoint(date: sample.endDate)
+                        updateHealthDataPoint(&newDataPoint, identifier: identifier, value: value)
+                        healthDataPoints.append(newDataPoint)
+                    }
+                }
+            } catch {
+                print("Timeout or error fetching \(identifier): \(error.localizedDescription)")
+                // Continue with other data types even if one fails
             }
         }
         
@@ -3110,6 +3163,32 @@ struct ExportView: View {
             break
         }
     }
+    
+    // MARK: - Timeout Helper
+    private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+            
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw TimeoutError()
+            }
+            
+            guard let result = try await group.next() else {
+                throw TimeoutError()
+            }
+            
+            group.cancelAll()
+            return result
+        }
+    }
+}
+
+// MARK: - Timeout Error
+struct TimeoutError: Error {
+    let localizedDescription = "Operation timed out"
 }
 
 // Helper view for toggle rows
